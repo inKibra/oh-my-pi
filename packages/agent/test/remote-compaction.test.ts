@@ -1096,6 +1096,36 @@ describe("requestCompactionV2Streaming", () => {
 		expect(error).toBeInstanceOf(AIError.ProviderHttpError);
 		expect(AIError.is(AIError.classify(error), AIError.Flag.AuthFailed)).toBe(true);
 	});
+
+	test("surfaces the caller's abort reason instead of the failed attempt's error", async () => {
+		const model = makeOpenAiModel({
+			remoteCompaction: {
+				enabled: true,
+				v2StreamingEnabled: true,
+				v2Endpoint: "https://compact.example/v1/responses",
+			},
+		});
+		const request = buildCompactionV2Request(
+			model,
+			[{ type: "message", role: "user", content: [{ type: "input_text", text: "real user" }] }],
+			"instructions",
+		);
+		const controller = new AbortController();
+		const deadline = new DOMException("maintenance deadline", "TimeoutError");
+		const fetchMock = vi.fn<FetchImpl>(async () => {
+			// The caller's deadline fires while the attempt fails with a retryable error.
+			controller.abort(deadline);
+			throw new Error("stream closed before response.completed");
+		});
+
+		const error = await requestCompactionV2Streaming(model, "test-key", request, controller.signal, {
+			fetch: fetchMock,
+			retryWait: async () => {},
+		}).catch(cause => cause);
+
+		expect(error).toBe(deadline);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("Responses Lite remote compaction", () => {
@@ -2496,6 +2526,49 @@ describe("compact() remote compaction failure handling", () => {
 		).rejects.toThrow();
 		expect(completeSpy).not.toHaveBeenCalled();
 	});
+
+	test.each(["native", "endpoint"] as const)(
+		"bounds a hung %s compaction request by the configured remote timeout",
+		async route => {
+			const completeSpy = vi.spyOn(ai, "completeSimple").mockResolvedValue(localSummaryMessage("local summary"));
+			const preparation = makePreparation();
+			preparation.settings = {
+				...preparation.settings,
+				remoteTimeoutMs: 20,
+				...(route === "endpoint" ? { remoteEndpoint: "http://summary.test/v1/chat/completions" } : {}),
+			};
+			const model: Model =
+				route === "native"
+					? makeOpenAiModel()
+					: buildModel({
+							id: "local-summarizer",
+							name: "Local Summarizer",
+							api: "openai-completions",
+							provider: "local-llama",
+							baseUrl: "http://127.0.0.1:8001/v1",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 131072,
+							maxTokens: 4096,
+						});
+			// The server accepts the request and never answers.
+			const fetchMock: FetchImpl = (_input, init) => {
+				const signal = init?.signal as AbortSignal | undefined;
+				const { promise, reject } = Promise.withResolvers<Response>();
+				signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+				return promise;
+			};
+
+			const error = await compact(preparation, model, "test-key", undefined, undefined, { fetch: fetchMock }).catch(
+				cause => cause,
+			);
+
+			expect(AIError.is(AIError.classify(error), AIError.Flag.Timeout)).toBe(true);
+			expect(completeSpy).not.toHaveBeenCalled();
+		},
+		2_000,
+	);
 
 	test("uses configured chat completions endpoints for openai-completions remote compaction", async () => {
 		const completeSpy = vi.spyOn(ai, "completeSimple").mockResolvedValue(localSummaryMessage("local fallback"));

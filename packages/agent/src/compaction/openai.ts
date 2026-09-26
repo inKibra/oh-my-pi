@@ -64,7 +64,8 @@ export * from "./compaction-v2-streaming";
 export const OPENAI_REMOTE_COMPACTION_PRESERVE_KEY = "openaiRemoteCompaction";
 
 /**
- * Hard ceiling on remote compaction HTTP requests (5 minutes). Unlike every
+ * Default ceiling on remote compaction HTTP requests (5 minutes), overridable
+ * per request via `timeoutMs` (`CompactionSettings.remoteTimeoutMs`). Unlike every
  * provider stream (guarded by first-event/idle watchdogs in pi-ai), these are
  * raw fetches awaiting one non-streamed JSON body — a connection silently
  * dropped by a middlebox would otherwise hang the whole compaction pipeline

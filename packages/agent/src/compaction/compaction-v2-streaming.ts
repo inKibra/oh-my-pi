@@ -44,7 +44,7 @@ export const V2_RETAINED_MESSAGE_TOKEN_BUDGET = 64_000;
 /** Max retries for V2 streaming compaction on transient stream errors. */
 export const V2_COMPACTION_MAX_RETRIES = 2;
 
-/** Timeout for V2 streaming compaction (5 minutes, same as V1). */
+/** Default per-attempt timeout for V2 streaming compaction (5 minutes, same as V1). */
 export const V2_COMPACTION_TIMEOUT_MS = 300_000;
 
 const DEFAULT_AZURE_API_VERSION = "v1";
@@ -291,19 +291,23 @@ export async function requestCompactionV2Streaming(
 				})
 			: undefined;
 	let lastError: Error | undefined;
+	const timeoutMs = options?.timeoutMs ?? V2_COMPACTION_TIMEOUT_MS;
 
 	for (let attempt = 0; attempt <= V2_COMPACTION_MAX_RETRIES; attempt++) {
-		const timeoutSignal = withRequestTimeout(signal, options?.timeoutMs ?? V2_COMPACTION_TIMEOUT_MS);
+		const timeoutSignal = withRequestTimeout(signal, timeoutMs);
 		try {
 			return await attemptCompactionV2Streaming(endpoint, apiKey, model, request, fetchImpl, timeoutSignal, {
 				codexMetadata,
 				providerSessionState: options?.providerSessionState,
 				codexCompaction: options?.codexCompaction,
 				preferWebsockets: options?.preferWebsockets,
+				timeoutMs,
 			});
 		} catch (err) {
+			// The caller's abort wins over whatever the attempt failed with (an
+			// internal watchdog, a transport wrapper): surface the caller's reason.
+			signal?.throwIfAborted();
 			const error = err instanceof Error ? err : new Error(String(err));
-			if (signal?.aborted) throw error;
 
 			if (isRetryableCompactionError(error) && attempt < V2_COMPACTION_MAX_RETRIES) {
 				lastError = error;
@@ -313,7 +317,7 @@ export async function requestCompactionV2Streaming(
 					model: model.id,
 				});
 				await retryWait(backoffMs, signal);
-				if (signal?.aborted) throw error;
+				signal?.throwIfAborted();
 				continue;
 			}
 
@@ -336,6 +340,7 @@ async function attemptCompactionV2Streaming(
 		providerSessionState?: Map<string, ProviderSessionState>;
 		codexCompaction?: CodexCompactionContext;
 		preferWebsockets?: boolean;
+		timeoutMs: number;
 	},
 ): Promise<CompactionV2Response> {
 	// Faithful to Codex: append the compaction trigger as the final input item
@@ -352,9 +357,14 @@ async function attemptCompactionV2Streaming(
 	}
 
 	if (shouldUseCodexProviderTransport(model)) {
+		// The compaction deadline also bounds the Codex stream watchdogs, so their
+		// inference defaults cannot cut a longer configured deadline short.
+		const watchdogMs = Math.max(0, options.timeoutMs);
 		const eventStream = await openCodexCompactionEventStream(model, body, {
 			apiKey,
 			signal,
+			streamFirstEventTimeoutMs: watchdogMs,
+			streamIdleTimeoutMs: watchdogMs,
 			fetch: fetchImpl,
 			sessionId: request.sessionId,
 			providerSessionState: options.providerSessionState,
