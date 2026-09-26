@@ -1,5 +1,6 @@
 import { $env } from "@oh-my-pi/pi-utils";
 import * as AIError from "../error";
+import { abortReason } from "./abort";
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
 const DEFAULT_STREAM_FIRST_EVENT_TIMEOUT_MS = 300_000;
@@ -521,11 +522,4 @@ export async function* iterateWithTerminalGrace<T>(
 			void Promise.resolve(returnPromise).catch(() => {});
 		}
 	}
-}
-
-function abortReason(signal: AbortSignal): Error {
-	const reason = signal.reason;
-	if (reason instanceof Error) return reason;
-	if (typeof reason === "string") return new AIError.AbortError(reason);
-	return new AIError.AbortError();
 }

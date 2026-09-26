@@ -53,6 +53,18 @@ export function createAbortSourceTracker(callerSignal?: AbortSignal): AbortSourc
 }
 
 /**
+ * The error a request should surface after `signal` aborted: the caller's own
+ * `Error` reason (e.g. a deadline's `TimeoutError`) unchanged, otherwise an
+ * {@link AIError.AbortError} carrying the string reason as its message.
+ */
+export function abortReason(signal: AbortSignal): Error {
+	const reason = signal.reason;
+	if (reason instanceof Error) return reason;
+	if (typeof reason === "string") return new AIError.AbortError(reason);
+	return new AIError.AbortError();
+}
+
+/**
  * Race a shared promise against a caller's AbortSignal without coupling the
  * underlying work to that signal. The shared promise keeps running (and caches
  * its result) even when an individual caller bails out.
