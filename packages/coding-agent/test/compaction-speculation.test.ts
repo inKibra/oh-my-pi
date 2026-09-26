@@ -628,6 +628,44 @@ describe("async speculative compaction", () => {
 		expect(maintenance.speculationState).toBe("idle");
 	});
 
+	it("aborts an in-flight speculation with the caller's reason", async () => {
+		const reason = new DOMException("maintenance deadline", "TimeoutError");
+		const signals: AbortSignal[] = [];
+		vi.spyOn(compactionModule, "compact").mockImplementation((_preparation, _model, _apiKey, _custom, signal) => {
+			if (!signal) throw new Error("Speculative compaction must be cancellable");
+			signals.push(signal);
+			const { promise, reject } = Promise.withResolvers<never>();
+			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+			return promise;
+		});
+		maintenance.maybeStartSpeculativeCompaction(SPECULATION_BAND_START, CONTEXT_WINDOW);
+		for (let microtask = 0; microtask < 100 && signals.length === 0; microtask++) await Promise.resolve();
+		expect(signals).toHaveLength(1);
+
+		maintenance.abortCompaction(reason);
+
+		expect(signals[0].reason).toBe(reason);
+		expect(maintenance.speculationState).toBe("idle");
+	});
+
+	it("keeps an armed speculation across abortCompaction", async () => {
+		const compactSpy = vi.spyOn(compactionModule, "compact").mockImplementation(async preparation => ({
+			summary: "armed summary",
+			firstKeptEntryId: preparation.firstKeptEntryId,
+			tokensBefore: preparation.tokensBefore,
+			details: {},
+		}));
+		maintenance.maybeStartSpeculativeCompaction(SPECULATION_BAND_START, CONTEXT_WINDOW);
+		await waitForState("armed");
+
+		maintenance.abortCompaction(new Error("user interrupt"));
+		await maintenance.runAutoCompaction("threshold", false, false, false, { triggerContextTokens: THRESHOLD });
+
+		const entry = sessionManager.getEntries().findLast(item => item.type === "compaction");
+		expect(entry?.type === "compaction" ? entry.summary : undefined).toBe("armed summary");
+		expect(compactSpy).toHaveBeenCalledTimes(1);
+	});
+
 	it("re-issues the agent's effective system prompt, not the base, on every compaction path", async () => {
 		// A per-turn `before_agent_start` override lives only on the agent
 		// (`agent.state.systemPrompt`); provider-native compaction re-issues the
