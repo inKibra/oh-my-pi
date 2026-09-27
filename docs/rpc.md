@@ -520,6 +520,7 @@ Common event types:
 - `turn_start`, `turn_end`
 - `message_start`, `message_update`, `message_end`
 - `tool_execution_start`, `tool_execution_update`, `tool_execution_end`
+- `compaction_state` (`start`/`progress`/`end` per `operationId`; see [SDK events](./sdk.md#event-subscription-model))
 - `auto_compaction_start`, `auto_compaction_end`
 - `auto_retry_start`, `auto_retry_end`
 - `retry_fallback_applied`, `retry_fallback_succeeded`

@@ -29,6 +29,21 @@ export type AgentSessionEvent =
 			awaitingAsyncWork?: boolean;
 	  })
 	| {
+			/**
+			 * Compaction activity for manual `/compact`, automatic compaction, and
+			 * context rollover. Every `start` is followed by exactly one `end` with the
+			 * same `operationId`, whether the pass succeeds, fails, or is aborted.
+			 * Operations can overlap (a fallback method starts before the pass it
+			 * replaces ends), so track activity by `operationId`.
+			 */
+			type: "compaction_state";
+			operationId: string;
+			trigger: "manual" | "auto";
+			phase: "start" | "progress" | "end";
+			/** `provider/id` of the model about to produce the summary; set on `progress`. */
+			model?: string;
+	  }
+	| {
 			type: "auto_compaction_start";
 			reason: "threshold" | "overflow" | "idle" | "incomplete";
 			action: "context-full" | "remote" | "handoff" | "shake" | "snapcompact";

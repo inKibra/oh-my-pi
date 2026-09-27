@@ -5,7 +5,7 @@ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ExtensionRuntime, loadExtensionFromFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import { ExtensionRunner } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
-import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { USER_INTERRUPT_LABEL } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
@@ -25,7 +25,7 @@ import {
 	cfgCompactionExperimentalContextManagement,
 } from "@oh-my-pi/pi-coding-agent/session/context-settings";
 
-type HookMode = "extension-veto" | "park";
+type HookMode = "extension-veto" | "park" | "summarize";
 
 describe.each([false, true])("AgentSession compaction cancellation source (experimental=%s)", experimental => {
 	let tempDir: TempDir;
@@ -54,6 +54,7 @@ describe.each([false, true])("AgentSession compaction cancellation source (exper
 			pi => {
 				pi.on("session_before_compact", async event => {
 					if (mode === "extension-veto") return { cancel: true };
+					if (mode === "summarize") return undefined;
 					entered?.();
 					await gate;
 					return {
@@ -142,6 +143,76 @@ describe.each([false, true])("AgentSession compaction cancellation source (exper
 		}
 		throw new Error("Expected compaction cancellation");
 	}
+
+	type CompactionStateEvent = Extract<AgentSessionEvent, { type: "compaction_state" }>;
+
+	function recordCompactionStates(target: AgentSession): CompactionStateEvent[] {
+		const events: CompactionStateEvent[] = [];
+		target.subscribe(event => {
+			if (event.type === "compaction_state") events.push(event);
+		});
+		return events;
+	}
+
+	/** Asserts one operation that started and then ended, returning its id. */
+	function expectSingleOperation(events: CompactionStateEvent[], trigger: "manual" | "auto"): string {
+		const boundaries = events.filter(event => event.phase !== "progress");
+		expect(boundaries.map(event => [event.phase, event.trigger])).toEqual([
+			["start", trigger],
+			["end", trigger],
+		]);
+		expect(boundaries[1]?.operationId).toBe(boundaries[0]?.operationId);
+		return boundaries[0]?.operationId ?? "";
+	}
+
+	it("reports a completed manual compaction as one compaction_state operation", async () => {
+		session = await createSession("park");
+		const states = recordCompactionStates(session);
+
+		await session.compact();
+		expectSingleOperation(states, "manual");
+	});
+
+	it("ends the compaction_state operation when manual compaction is aborted", async () => {
+		const started = Promise.withResolvers<void>();
+		const gate = Promise.withResolvers<void>();
+		session = await createSession("park", started.resolve, gate.promise);
+		const states = recordCompactionStates(session);
+
+		const cancellation = cancellationFrom(session.compact());
+		await started.promise;
+		expect(states.map(event => event.phase)).toEqual(["start"]);
+		session.abortCompaction(USER_INTERRUPT_LABEL);
+		gate.resolve();
+		await cancellation;
+		expectSingleOperation(states, "manual");
+	});
+
+	if (!experimental) {
+		it("reports the summarizing model and ends the operation when summarization fails", async () => {
+			session = await createSession("summarize");
+			const states = recordCompactionStates(session);
+
+			// fetch rejects every summarization request. Whatever fallbacks run, they
+			// report under the one operation, which still ends.
+			await expect(session.compact()).rejects.toThrow();
+			const operationId = expectSingleOperation(states, "manual");
+			const progress = states.slice(1, -1);
+			expect(progress[0]?.model).toBe("anthropic/claude-sonnet-4-5");
+			for (const event of progress) {
+				expect([event.phase, event.operationId]).toEqual(["progress", operationId]);
+			}
+		});
+	}
+
+	it("reports idle automatic compaction as one compaction_state operation", async () => {
+		session = await createSession("park");
+		const states = recordCompactionStates(session);
+
+		await session.runIdleCompaction();
+		expect(session.sessionManager.getEntries().filter(entry => entry.type === "compaction")).toHaveLength(1);
+		expectSingleOperation(states, "auto");
+	});
 
 	it("leaves extension vetoes unmarked as user interrupts", async () => {
 		session = await createSession("extension-veto");

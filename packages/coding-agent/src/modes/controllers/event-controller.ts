@@ -300,6 +300,8 @@ export class EventController {
 				}
 			},
 			tool_execution_end: e => this.#handleToolExecutionEnd(e),
+			// The loader is driven by auto_compaction_* and the /compact command itself.
+			compaction_state: async () => {},
 			auto_compaction_start: e => this.#handleAutoCompactionStart(e),
 			auto_compaction_end: e => this.#handleAutoCompactionEnd(e),
 			auto_retry_start: e => this.#handleAutoRetryStart(e),

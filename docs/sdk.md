@@ -224,6 +224,7 @@ const unsubscribe = session.subscribe((event) => {
 
 `AgentSessionEvent` includes core `AgentEvent` plus session-level events:
 
+- `compaction_state`
 - `auto_compaction_start` / `auto_compaction_end`
 - `auto_retry_start` / `auto_retry_end`
 - `retry_fallback_applied` / `retry_fallback_succeeded`
@@ -240,6 +241,24 @@ const unsubscribe = session.subscribe((event) => {
 delivery will resume the session before its true final settle. Subscribers that
 use `agent_end` as a completion signal MUST wait for `isTerminal !== false`.
 Treat an absent field as terminal for compatibility with older runtimes.
+
+`compaction_state` reports compaction activity for manual `/compact`, automatic
+compaction, and context rollover:
+
+```ts
+{
+  type: "compaction_state";
+  operationId: string;
+  trigger: "manual" | "auto";
+  phase: "start" | "progress" | "end";
+  model?: string; // `provider/id` of the summarizing model, on `progress`
+}
+```
+
+Every `start` is followed by exactly one `end` with the same `operationId`,
+whether the pass succeeds, fails, or is aborted. Operations can overlap (a
+fallback method starts before the pass it replaces ends), so track activity by
+`operationId` rather than as a single flag.
 
 ## Prompt lifecycle
 
