@@ -243,4 +243,8 @@ export interface AgentDefinition {
 	advisor?: boolean | string;
 	source: AgentSource;
 	filePath?: string;
+	/** Raw file content the definition was parsed from (file-backed agents only). */
+	content?: string;
+	/** SHA-256 hex digest of `content`; compare before writing `filePath` to detect concurrent edits. */
+	revision?: string;
 }
