@@ -2030,6 +2030,8 @@ export interface TaskToolDetails {
 		state: "running" | "completed" | "failed";
 		jobId: string;
 		type: "task";
+		/** Start time (epoch ms) of the job `jobId` names; absent until that job is registered. */
+		startedAt?: number;
 	};
 }
 

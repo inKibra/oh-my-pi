@@ -76,6 +76,8 @@ export interface EvalToolDetails {
 		state: "running" | "completed" | "failed";
 		jobId: string;
 		type: "eval";
+		/** Job start time (epoch ms); absent in details persisted before it was recorded. */
+		startedAt?: number;
 	};
 }
 

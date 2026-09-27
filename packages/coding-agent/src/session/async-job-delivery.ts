@@ -51,6 +51,7 @@ type AsyncResultJobDetails = {
 	jobId: string;
 	type?: AsyncJobType;
 	label?: string;
+	startedAt?: number;
 	durationMs?: number;
 	/** Source capture metadata belongs to this job, not to the enclosing delivery report. */
 	meta?: OutputMeta;
@@ -108,6 +109,7 @@ export function buildAsyncResultBatchMessage(entries: AsyncResultEntry[]): Custo
 			result: entry.result,
 			type: entry.job?.type,
 			label: entry.job?.label,
+			startedAt: entry.job?.startTime,
 			durationMs: entry.durationMs,
 			meta: entry.job?.latestDetails?.meta,
 			structured,
@@ -125,6 +127,7 @@ export function buildAsyncResultBatchMessage(entries: AsyncResultEntry[]): Custo
 			jobId: job.jobId,
 			type: job.type,
 			label: job.label,
+			startedAt: job.startedAt,
 			durationMs: job.durationMs,
 			...(job.meta ? { meta: job.meta } : {}),
 			...(job.structured ? { schema: job.structured } : {}),

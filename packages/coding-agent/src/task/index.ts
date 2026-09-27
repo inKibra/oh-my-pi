@@ -904,6 +904,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		let settledCount = 0;
 		let failedCount = 0;
 		let primaryJobId = asyncSpawns[0].agentId;
+		let primaryStartedAt: number | undefined;
 		const syncResults: SingleResult[] = [];
 		// oxlint-disable-next-line prefer-const -- read by buildAsyncDetails before assignment
 		let syncUsage: Usage | undefined;
@@ -921,6 +922,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				state: settledCount < asyncSpawns.length ? "running" : failedCount > 0 ? "failed" : "completed",
 				jobId: primaryJobId,
 				type: "task",
+				startedAt: primaryStartedAt,
 			},
 		});
 
@@ -942,7 +944,10 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 						if (failed) failedCount += 1;
 					},
 				});
-				if (started.length === 0) primaryJobId = jobId;
+				if (started.length === 0) {
+					primaryJobId = jobId;
+					primaryStartedAt = manager.getJob(jobId)?.startTime;
+				}
 				started.push({ agentId: spawn.agentId, jobId });
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);

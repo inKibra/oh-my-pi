@@ -321,6 +321,8 @@ export class AsyncJobManager {
 		label: string,
 		run: (ctx: {
 			jobId: string;
+			/** Epoch ms the job was registered; equals {@link AsyncJob.startTime}. */
+			startTime: number;
 			signal: AbortSignal;
 			reportProgress: (text: string, details?: AsyncJobDetails) => Promise<void>;
 			/** Clear the queued flag once the job actually starts executing. */
@@ -382,6 +384,7 @@ export class AsyncJobManager {
 			try {
 				const outcome = await run({
 					jobId: id,
+					startTime,
 					signal: abortController.signal,
 					reportProgress,
 					markRunning: () => {
