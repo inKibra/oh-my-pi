@@ -3226,7 +3226,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			const imageGenRequested = !options.toolNames || options.toolNames.includes("generate_image");
 			if (cfgGenerateImageEnabled.get(settings) && imageGenRequested) {
 				const imageGenTools = await logger.time("getImageGenTools", () =>
-					getImageGenTools(modelRegistry, toolSession.getActiveModel?.()),
+					getImageGenTools(modelRegistry, toolSession.getActiveModel?.(), settings),
 				);
 				wanted.push(...(imageGenTools as unknown as CustomTool[]));
 			}

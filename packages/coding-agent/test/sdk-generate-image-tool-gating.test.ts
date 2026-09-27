@@ -29,6 +29,9 @@ describe("generate_image tool gating", () => {
 		registryDir = path.join(os.tmpdir(), `pi-generate-image-gating-${Snowflake.next()}`);
 		fs.mkdirSync(registryDir, { recursive: true });
 		authStorage = await AuthStorage.create(path.join(registryDir, "auth.db"));
+		// `generate_image` registers only when an available image model can serve it;
+		// the OpenAI key exposes bundled `gpt-image-*` models and their hosted carrier.
+		authStorage.keys.setRuntime("openai", "test-key");
 		modelRegistry = new ModelRegistry(authStorage, path.join(registryDir, "models.yml"));
 	});
 

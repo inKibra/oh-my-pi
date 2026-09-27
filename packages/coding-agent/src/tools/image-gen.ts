@@ -15,7 +15,7 @@ import { isEnoent, logger, parseImageMetadata, prompt, ptree, Snowflake, untilAb
 import { resolveModelRoleValue, resolveRoleChain } from "../config/model-resolver";
 import { roleCandidatePool } from "../config/model-roles";
 import { isAuthenticated, type ModelRegistry } from "../config/model-registry";
-import { settings } from "../config/settings";
+import { type Settings, settings } from "../config/settings";
 import type { CustomTool } from "../extensibility/custom-tools/types";
 import imageGenDescription from "../prompts/tools/image-gen.md" with { type: "text" };
 import { resolveReadPath } from "./path-utils";
@@ -306,16 +306,29 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 	},
 };
 
+/**
+ * The `generate_image` tool, or none when no available image-role model could serve it:
+ * the model must speak a supported image API and, on the hosted Responses path, have a
+ * chat carrier. Uses configured-auth availability only; credentials are not resolved.
+ */
 export async function getImageGenTools(
-	_modelRegistry?: ModelRegistry,
-	_activeModel?: Model,
+	modelRegistry: ModelRegistry,
+	activeModel?: Model,
+	sessionSettings: Settings = settings,
 ): Promise<Array<CustomTool<typeof imageGenSchema, ImageGenToolDetails>>> {
-	return [imageGenTool];
+	const usable = roleCandidatePool("image", sessionSettings, modelRegistry).some(
+		model =>
+			isImageGenerationApi(model.api) &&
+			((model.api !== "openai-responses" && model.api !== "openai-codex-responses") ||
+				resolveHostedImageCarrier(modelRegistry, model, activeModel) !== undefined),
+	);
+	return usable ? [imageGenTool] : [];
 }
 
 export async function getImageGenToolsWithRegistry(
-	_modelRegistry: ModelRegistry,
-	_activeModel?: Model,
+	modelRegistry: ModelRegistry,
+	activeModel?: Model,
+	sessionSettings: Settings = settings,
 ): Promise<Array<CustomTool<typeof imageGenSchema, ImageGenToolDetails>>> {
-	return [imageGenTool];
+	return getImageGenTools(modelRegistry, activeModel, sessionSettings);
 }

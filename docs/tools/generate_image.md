@@ -7,7 +7,7 @@
 - Model-facing prompt: `packages/coding-agent/src/prompts/tools/image-gen.md`
 - Session injection: `packages/coding-agent/src/sdk.ts` (`getImageGenTools()`)
 
-The custom tool is registered only when `generate_image.enabled=true` (default `false`) and the session's explicit tool filter, if any, requests `generate_image`. Toggling the setting registers or removes it in the running session.
+The custom tool is registered only when `generate_image.enabled=true` (default `false`), the session's explicit tool filter, if any, requests `generate_image`, and the model registry has an available catalog model of kind `image` on a supported image API (a hosted Responses image model also needs a same-provider chat carrier). Toggling the setting registers or removes it in the running session.
 
 ## Inputs
 
@@ -34,7 +34,7 @@ The custom tool is registered only when `generate_image.enabled=true` (default `
 - Model responses with no image data return `imageCount: 0`, empty `imagePaths` / `images`, and any provider text/feedback available.
 
 ## Flow
-1. The SDK injects `generate_image` as a custom tool via `getImageGenTools()` only when the feature gate and tool filter allow it.
+1. The SDK injects `generate_image` as a custom tool via `getImageGenTools()` only when the feature gate and tool filter allow it and an available image model could serve a request; availability is checked from configured auth without resolving credentials.
 2. A request with `model` resolves that selector against available catalog models of kind `image` and attempts only the selected model. Without `model`, the tool resolves `modelRoles.image` followed by `retry.fallbackChains.image`; when no fallback chain is configured, the built-in image defaults apply, while `retry.fallbackChains.image: []` disables fallbacks. The active session provider is hoisted only among non-explicit built-in candidates.
 3. The tool skips candidates with an unsupported API transport, unavailable credentials, or an unavailable hosted carrier. A provider HTTP failure advances to the next model in the resolved chain; validation, parsing, local I/O, cancellation, and timeout failures do not.
 4. Input images are resolved once, after the first usable model is found. A `path` is resolved relative to session cwd and content-sniffed. Inline `data` may be raw base64 (requiring `mime_type`) or a `data:<mime>;base64,...` URL.
