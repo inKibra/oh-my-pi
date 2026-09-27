@@ -756,7 +756,12 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		options: { requestedTimeoutSec?: number; notices?: readonly string[] } = {},
 	): AgentToolResult<BashToolDetails> {
 		const details: BashToolDetails = {
-			async: { state: "running", jobId, type: "bash" },
+			async: {
+				state: "running",
+				jobId,
+				type: "bash",
+				startedAt: this.session.asyncJobManager?.getJob(jobId)?.startTime,
+			},
 		};
 		if (timeoutSec === undefined) {
 			details.timeoutDisabled = true;
@@ -813,7 +818,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		const jobId = manager.register(
 			"bash",
 			label,
-			async ({ jobId, signal: runSignal, reportProgress }) => {
+			async ({ jobId, startTime, signal: runSignal, reportProgress }) => {
 				const { path: artifactPath, id: artifactId } = (await this.session.allocateOutputArtifact?.("bash")) ?? {};
 				const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES);
 				const wallTimeStart = performance.now();
@@ -832,7 +837,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							latestText = tailBuffer.text();
 							void reportProgress(latestText, {
 								output: latestText,
-								async: { state: "running", jobId, type: "bash" },
+								async: { state: "running", jobId, type: "bash", startedAt: startTime },
 							});
 						},
 						onMinimizedSave: originalText => saveBashOriginalArtifact(this.session, originalText),
@@ -863,7 +868,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					}
 					await reportProgress(finalText, {
 						...latestProgressDetails,
-						async: { state: "completed", jobId, type: "bash" },
+						async: { state: "completed", jobId, type: "bash", startedAt: startTime },
 					});
 					return finalText;
 				} catch (error) {
@@ -872,7 +877,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					completion.resolve({ kind: "failed", error });
 					await reportProgress(message, {
 						...latestProgressDetails,
-						async: { state: "failed", jobId, type: "bash" },
+						async: { state: "failed", jobId, type: "bash", startedAt: startTime },
 					});
 					throw error;
 				}

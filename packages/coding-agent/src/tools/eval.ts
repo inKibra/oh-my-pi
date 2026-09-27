@@ -627,12 +627,12 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 		const jobId = autoBgManager.register(
 			"eval",
 			label,
-			async ({ jobId, signal: runSignal, reportProgress }) => {
+			async ({ jobId, startTime, signal: runSignal, reportProgress }) => {
 				try {
 					const result = await run(runSignal, (text, details) => {
 						latestText = text;
 						latestDetails = details;
-						void reportProgress(text, { async: { state: "running", jobId, type: "eval" } });
+						void reportProgress(text, { async: { state: "running", jobId, type: "eval", startedAt: startTime } });
 						if (forwardUpdates) emitToolUpdate?.(text, details);
 					});
 					const finalText =
@@ -651,7 +651,7 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 					}
 					await reportProgress(finalText, {
 						...result.details,
-						async: { state: "completed", jobId, type: "eval" },
+						async: { state: "completed", jobId, type: "eval", startedAt: startTime },
 					});
 					return finalText;
 				} catch (error) {
@@ -660,7 +660,7 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 					completion.resolve({ kind: "failed", error });
 					await reportProgress(message, {
 						...latestDetails,
-						async: { state: "failed", jobId, type: "eval" },
+						async: { state: "failed", jobId, type: "eval", startedAt: startTime },
 					});
 					throw error;
 				}
@@ -733,7 +733,12 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 			})),
 		};
 		if (notice) details.notice ??= notice;
-		details.async = { state: "running", jobId, type: "eval" };
+		details.async = {
+			state: "running",
+			jobId,
+			type: "eval",
+			startedAt: this.session?.asyncJobManager?.getJob(jobId)?.startTime,
+		};
 		const lines: string[] = [];
 		const trimmedPreview = previewText.trimEnd();
 		if (trimmedPreview.length > 0) {

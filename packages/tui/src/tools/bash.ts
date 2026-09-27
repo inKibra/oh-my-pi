@@ -52,6 +52,8 @@ export interface BashToolDetails {
 		state: "running" | "completed" | "failed";
 		jobId: string;
 		type: "bash";
+		/** Job start time (epoch ms); absent in details persisted before it was recorded. */
+		startedAt?: number;
 	};
 }
 

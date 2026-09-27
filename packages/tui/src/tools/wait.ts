@@ -43,6 +43,8 @@ export interface JobSnapshot {
 	type: "bash" | "task" | "eval";
 	status: "running" | "completed" | "failed" | "cancelled";
 	label: string;
+	/** Job start time (epoch ms); absent in snapshots persisted before it was recorded. */
+	startedAt?: number;
 	durationMs: number;
 	/** Process exit status when the job reports one. */
 	exitCode?: number;
