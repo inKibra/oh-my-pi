@@ -6065,7 +6065,7 @@ export class AgentSession implements SettingsScope {
 		return this.#maintenance.compact(customInstructions, options);
 	}
 
-	/** Cancel active manual, automatic, and handoff maintenance, preserving an optional source reason. */
+	/** Cancel active manual, automatic, speculative, and handoff maintenance, preserving an optional source reason. */
 	abortCompaction(reason?: unknown): void {
 		void this.#maintenance.abortCompaction(reason);
 	}

@@ -620,12 +620,12 @@ export class SessionMaintenance {
 		return this.#speculation?.promise;
 	}
 
-	/** Abort and discard any in-flight or armed speculative compaction. */
-	cancelSpeculation(): void {
+	/** Abort and discard any in-flight or armed speculative compaction, forwarding `reason` to its signal. */
+	cancelSpeculation(reason?: unknown): void {
 		const run = this.#speculation;
 		if (!run) return;
 		this.#speculation = undefined;
-		run.controller.abort();
+		run.controller.abort(reason);
 	}
 
 	/** Assistant timestamp whose post-turn maintenance must be skipped once. */
@@ -1882,6 +1882,9 @@ export class SessionMaintenance {
 		const manualCompactionCleanup = this.#manualCompactionCleanup;
 		this.#compactionAbortController?.abort(reason);
 		this.#autoCompactionAbortController?.abort(reason);
+		// An in-flight speculative pass is live maintenance too. An armed result is
+		// finished work: it stays claimable and is revalidated when claimed.
+		if (this.speculationState === "running") this.cancelSpeculation(reason);
 		this.#host.abortHandoff();
 		return manualCompactionCleanup;
 	}
