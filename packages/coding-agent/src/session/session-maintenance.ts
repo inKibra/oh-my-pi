@@ -517,6 +517,8 @@ export class SessionMaintenance {
 	/** Interrupted-turn resume withheld from a compaction `finally` because a claim was open; consumed by `release(false)`, {@link noteTurnStarted}, or the next manual pass. */
 	#deferredResumeGeneration: number | undefined;
 	#autoCompactionAbortController: AbortController | undefined;
+	/** Published `compaction_state` operations, keyed by the signal that cancels each pass. */
+	readonly #compactionOperations = new Map<AbortSignal, { operationId: string; trigger: "manual" | "auto" }>();
 	/**
 	 * Live tool-loop contexts parked after mid-turn maintenance hit a no-progress
 	 * dead end. Membership suppresses the repeated rescue + warning while no cut
@@ -645,6 +647,33 @@ export class SessionMaintenance {
 	#emitLifecycleEvent(event: AgentSessionEvent, detach: boolean): Promise<void> {
 		return this.#host.emitSessionEvent(event, detach ? { detachExtensions: true } : undefined);
 	}
+
+	/**
+	 * `compaction_state` frames detach extension fan-out and are never awaited,
+	 * so reporting adds no yield point to the compaction path it describes.
+	 */
+	#startCompactionOperation(signal: AbortSignal, trigger: "manual" | "auto"): void {
+		const operation = { operationId: crypto.randomUUID(), trigger };
+		this.#compactionOperations.set(signal, operation);
+		void this.#emitLifecycleEvent({ type: "compaction_state", ...operation, phase: "start" }, true);
+	}
+
+	#progressCompactionOperation(signal: AbortSignal, model: Model): void {
+		const operation = this.#compactionOperations.get(signal);
+		if (!operation) return;
+		void this.#emitLifecycleEvent(
+			{ type: "compaction_state", ...operation, phase: "progress", model: `${model.provider}/${model.id}` },
+			true,
+		);
+	}
+
+	#endCompactionOperation(signal: AbortSignal): void {
+		const operation = this.#compactionOperations.get(signal);
+		if (!operation) return;
+		this.#compactionOperations.delete(signal);
+		void this.#emitLifecycleEvent({ type: "compaction_state", ...operation, phase: "end" }, true);
+	}
+
 	/**
 	 * Append plan-read protection to a prune/shake config so the active plan
 	 * file survives compaction alongside skill reads (the config defaults
@@ -1111,6 +1140,7 @@ export class SessionMaintenance {
 
 		try {
 			if (ownsCompactionController) {
+				this.#startCompactionOperation(compactionAbortController.signal, "manual");
 				// A manual compaction aborts the live turn, tool loop included. Without a
 				// resume the agent sits idle on a half-finished loop (an autoresearch run,
 				// a pending tool result) until the user types "continue" by hand.
@@ -1534,6 +1564,9 @@ export class SessionMaintenance {
 						this.#scheduleInterruptedTurnResume(interruptedTurnGeneration);
 					}
 				}
+				// Last, so a subscriber reacting to `end` cannot perturb the resume
+				// decision above.
+				this.#endCompactionOperation(compactionAbortController.signal);
 			}
 		}
 	}
@@ -1672,6 +1705,7 @@ export class SessionMaintenance {
 			options.terminalTextAnswer ?? isTerminalTextAssistantAnswer(this.#host.findLastAssistantMessage());
 		const detachPostCommit = options.detachPostCommit === true;
 		try {
+			this.#startCompactionOperation(controller.signal, "auto");
 			await this.#emitLifecycleEvent({ type: "auto_compaction_start", reason, action: "context-full" }, false);
 			if (controller.signal.aborted) {
 				await this.#emitLifecycleEvent(
@@ -1845,6 +1879,7 @@ export class SessionMaintenance {
 			if (this.#autoCompactionAbortController === controller) {
 				this.#autoCompactionAbortController = undefined;
 			}
+			this.#endCompactionOperation(controller.signal);
 		}
 	}
 
@@ -3398,6 +3433,7 @@ export class SessionMaintenance {
 			) {
 				throw nativeCompactionFailure.error;
 			}
+			this.#progressCompactionOperation(signal, candidate);
 
 			try {
 				return await compact(
@@ -4328,6 +4364,7 @@ export class SessionMaintenance {
 			// for any listener — and for input routed during this emit's event-loop yield:
 			// a message typed as the compaction loader appears must land in the compaction
 			// queue, not the core steering queue (which handoff's agent.reset() would wipe).
+			this.#startCompactionOperation(autoCompactionSignal, "auto");
 			const startEvent = { type: "auto_compaction_start" as const, reason, action };
 			await this.#emitLifecycleEvent(startEvent, false);
 			if (armedSpec) {
@@ -4818,6 +4855,7 @@ export class SessionMaintenance {
 					) {
 						throw nativeCompactionFailure.error;
 					}
+					this.#progressCompactionOperation(autoCompactionSignal, candidate);
 
 					let attempt = 0;
 					while (true) {
@@ -5050,6 +5088,7 @@ export class SessionMaintenance {
 			if (this.#autoCompactionAbortController === autoCompactionAbortController) {
 				this.#autoCompactionAbortController = undefined;
 			}
+			this.#endCompactionOperation(autoCompactionSignal);
 		}
 		return COMPACTION_CHECK_NONE;
 	}
@@ -5267,6 +5306,7 @@ export class SessionMaintenance {
 		this.#autoCompactionAbortController = controller;
 		const signal = controller.signal;
 		try {
+			this.#startCompactionOperation(signal, "auto");
 			await this.#emitLifecycleEvent({ type: "auto_compaction_start", reason, action }, false);
 			const result = await this.#host.shake("elide", { config: DEFAULT_SHAKE_CONFIG, signal });
 			if (signal.aborted) {
@@ -5420,6 +5460,7 @@ export class SessionMaintenance {
 			if (this.#autoCompactionAbortController === controller) {
 				this.#autoCompactionAbortController = undefined;
 			}
+			this.#endCompactionOperation(signal);
 		}
 	}
 
