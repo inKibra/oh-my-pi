@@ -8366,39 +8366,52 @@ export class AgentSession implements SettingsScope {
 	 * Steps over agent-authored queued messages (advisor cards, hidden/internal steers).
 	 */
 	popLastQueuedMessage(): RestoredQueuedMessage | undefined {
-		const steering = this.agent.peekSteeringQueue();
-		const followUp = this.agent.peekFollowUpQueue();
 		const lastUserIndex = (queue: readonly AgentMessage[]): number => {
 			for (let i = queue.length - 1; i >= 0; i--) {
 				if (isUserQueuedMessage(queue[i])) return i;
 			}
 			return -1;
 		};
-		// Notices queue immediately before their user message, so dropping the popped
-		// prompt means also dropping the contiguous hidden-user companions right before
-		// it — companions of other queued prompts stay put.
-		const removeWithCompanions = (queue: readonly AgentMessage[], userIndex: number): AgentMessage[] => {
-			let start = userIndex;
-			while (start > 0 && isHiddenUserCompanion(queue[start - 1])) start--;
-			const next = queue.slice();
-			next.splice(start, userIndex - start + 1);
-			return next;
-		};
-		const fromSteer = lastUserIndex(steering);
-		if (fromSteer >= 0) {
-			const removed = steering[fromSteer];
-			this.agent.replaceQueues(removeWithCompanions(steering, fromSteer), followUp.slice());
-			this.#reconcileQueuedMessageDrain();
-			return toRestoredQueuedMessage(removed);
-		}
-		const fromFollowUp = lastUserIndex(followUp);
-		if (fromFollowUp >= 0) {
-			const removed = followUp[fromFollowUp];
-			this.agent.replaceQueues(steering.slice(), removeWithCompanions(followUp, fromFollowUp));
-			this.#reconcileQueuedMessageDrain();
-			return toRestoredQueuedMessage(removed);
+		const fromSteer = lastUserIndex(this.agent.peekSteeringQueue());
+		if (fromSteer >= 0) return this.#removeQueuedUserMessage("steering", fromSteer);
+		const fromFollowUp = lastUserIndex(this.agent.peekFollowUpQueue());
+		if (fromFollowUp >= 0) return this.#removeQueuedUserMessage("followUp", fromFollowUp);
+		return undefined;
+	}
+
+	/**
+	 * Remove one queued message by its position in {@link getQueuedMessages}`()[kind]`.
+	 * Returns the removed message as editor-restorable content, or `undefined` when
+	 * `index` is out of range or names steering live steering already took for the
+	 * streaming response (listed first, but no longer removable).
+	 */
+	removeQueuedMessage(kind: "steering" | "followUp", index: number): RestoredQueuedMessage | undefined {
+		if (!Number.isInteger(index) || index < 0) return undefined;
+		const queueIndex =
+			kind === "steering" ? index - this.agent.peekLiveSteeredMessages().filter(isUserQueuedMessage).length : index;
+		if (queueIndex < 0) return undefined;
+		const queue = kind === "steering" ? this.agent.peekSteeringQueue() : this.agent.peekFollowUpQueue();
+		let seen = -1;
+		for (let i = 0; i < queue.length; i++) {
+			if (isUserQueuedMessage(queue[i]) && ++seen === queueIndex) return this.#removeQueuedUserMessage(kind, i);
 		}
 		return undefined;
+	}
+
+	/** Removes the queued user message at raw `userIndex` together with the contiguous
+	 *  hidden-user companions queued right before it — companions of other queued
+	 *  prompts stay put. */
+	#removeQueuedUserMessage(kind: "steering" | "followUp", userIndex: number): RestoredQueuedMessage {
+		const steering = this.agent.peekSteeringQueue().slice();
+		const followUp = this.agent.peekFollowUpQueue().slice();
+		const queue = kind === "steering" ? steering : followUp;
+		const removed = queue[userIndex];
+		let start = userIndex;
+		while (start > 0 && isHiddenUserCompanion(queue[start - 1])) start--;
+		queue.splice(start, userIndex - start + 1);
+		this.agent.replaceQueues(steering, followUp);
+		this.#reconcileQueuedMessageDrain();
+		return toRestoredQueuedMessage(removed);
 	}
 
 	get skillsSettings(): SkillsSettings | undefined {

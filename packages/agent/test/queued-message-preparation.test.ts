@@ -338,6 +338,67 @@ describe("queued message preparation", () => {
 		expect(userTexts(mock.calls[0].context.messages)).toEqual(["first"]);
 	});
 
+	it("removes a queued steer by index and delivers the rest in order", async () => {
+		const mock = createMockModel({ handler: { content: ["done"] } });
+		const agent = new Agent({ streamFn: mock.stream, initialState: { model: mock.model }, steeringMode: "all" });
+		const first = createUserMessage("first");
+		const second = createUserMessage("second");
+		const third = createUserMessage("third");
+		agent.steer(first);
+		agent.steer(second);
+		agent.steer(third);
+
+		expect(agent.removeSteer(3)).toBeUndefined();
+		expect(agent.removeSteer(-1)).toBeUndefined();
+		expect(agent.removeSteer(0.5)).toBeUndefined();
+		expect(agent.removeSteer(1)).toBe(second);
+		expect(agent.peekSteeringQueue()).toEqual([first, third]);
+
+		await agent.continue();
+		expect(userTexts(mock.calls[0].context.messages)).toEqual(["first", "third"]);
+	});
+
+	it("indexed removal cancels a pending preparation only when it removes a claimed original", async () => {
+		const mock = createMockModel({ handler: { content: ["done"] } });
+		const agent = new Agent({ streamFn: mock.stream, initialState: { model: mock.model }, followUpMode: "all" });
+		const first = createUserMessage("first");
+		const second = createUserMessage("second");
+		const later = createUserMessage("later");
+		const last = createUserMessage("last");
+		const started = Promise.withResolvers<AbortSignal>();
+		const release = Promise.withResolvers<void>();
+		let commits = 0;
+		agent.prepareQueuedMessages = async (_messages, signal) => {
+			started.resolve(signal);
+			await release.promise;
+			return {
+				commit: () => {
+					commits++;
+					return [];
+				},
+			};
+		};
+		agent.followUp(first);
+		agent.followUp(second);
+		const outcome = agent.continue().catch(error => error);
+		const signal = await started.promise;
+		agent.followUp(later);
+		agent.followUp(last);
+		expect(agent.removeFollowUp(4)).toBeUndefined();
+		expect(agent.removeFollowUp(2)).toBe(later);
+		expect(signal.aborted).toBe(false);
+		expect(agent.removeFollowUp(1)).toBe(second);
+		expect(signal.aborted).toBe(true);
+		release.resolve();
+		await outcome;
+
+		expect(commits).toBe(0);
+		expect(agent.peekFollowUpQueue()).toEqual([first, last]);
+		agent.prepareQueuedMessages = undefined;
+		await agent.continue();
+		expect(userTexts(mock.calls[0].context.messages)).toEqual(["first", "last"]);
+	});
+
 	it("reset cancels a live preparation without contaminating a successor prompt", async () => {
 		const mock = createMockModel({ handler: { content: ["done"] } });
 		const agent = new Agent({ streamFn: mock.stream, initialState: { model: mock.model } });

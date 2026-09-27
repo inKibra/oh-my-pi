@@ -1358,6 +1358,34 @@ export class Agent {
 		return this.#followUpQueue.pop();
 	}
 
+	/**
+	 * Remove and return the steering message at `index` in {@link peekSteeringQueue}.
+	 * Returns `undefined` (leaving the queue untouched) when `index` is out of range.
+	 */
+	removeSteer(index: number): AgentMessage | undefined {
+		return this.#removeQueuedMessage("steering", index);
+	}
+
+	/**
+	 * Remove and return the follow-up message at `index` in {@link peekFollowUpQueue}.
+	 * Returns `undefined` (leaving the queue untouched) when `index` is out of range.
+	 */
+	removeFollowUp(index: number): AgentMessage | undefined {
+		return this.#removeQueuedMessage("followUp", index);
+	}
+
+	#removeQueuedMessage(queue: QueuedMessageQueue, index: number): AgentMessage | undefined {
+		const claimed = this.#queuedMessageClaims[queue]?.messages.length ?? 0;
+		const pending = queue === "steering" ? this.#steeringQueue.length : this.#followUpQueue.length;
+		if (!Number.isInteger(index) || index < 0 || index >= claimed + pending) return undefined;
+		// Like LIFO restoration, removing a claimed original cancels its pending
+		// preparation and returns the rest of the batch to the queue front.
+		if (index < claimed) this.#cancelQueuedMessagePreparation(queue, true);
+		else index -= claimed;
+		const messages = queue === "steering" ? this.#steeringQueue : this.#followUpQueue;
+		return messages.splice(index, 1)[0];
+	}
+
 	clearMessages() {
 		this.#state.messages.length = 0;
 	}

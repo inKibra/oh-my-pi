@@ -317,6 +317,52 @@ describe("AgentSession queued steer delivery", () => {
 		expect(hasQueuedAfterClear).toBe(false);
 	});
 
+	it("removing a queued steer by index drops its companion and delivers the rest in order", async () => {
+		const { session } = await createSession([
+			{ content: ["host answer"] },
+			{ content: ["ack first"] },
+			{ content: ["ack third"] },
+		]);
+		let queuedShape: string[] | undefined;
+		let removed: unknown;
+		let removedOutOfRange: unknown;
+		let remaining: readonly string[] | undefined;
+		let injected = false;
+		session.agent.setOnBeforeYield(async () => {
+			if (injected) return;
+			injected = true;
+			await session.steer("first");
+			await session.prompt("ultrathink second", { streamingBehavior: "steer" });
+			await session.steer("third");
+			queuedShape = session.agent.peekSteeringQueue().map(m => (m.role === "custom" ? m.customType : m.role));
+			removed = session.removeQueuedMessage("steering", 1);
+			removedOutOfRange = session.removeQueuedMessage("steering", 2);
+			remaining = session.getQueuedMessages().steering;
+		});
+
+		await session.prompt("hello");
+		await session.waitForIdle();
+
+		expect(queuedShape).toEqual(["user", "ultrathink-notice", "user", "user"]);
+		expect(removed).toEqual({ text: "ultrathink second", images: undefined });
+		expect(removedOutOfRange).toBeUndefined();
+		expect(remaining).toEqual(["first", "third"]);
+		const transcript = session.agent.state.messages;
+		expect(transcript.some(m => m.role === "custom" && m.customType === "ultrathink-notice")).toBe(false);
+		const userTexts = transcript
+			.filter(m => m.role === "user")
+			.map(m =>
+				typeof m.content === "string"
+					? m.content
+					: m.content
+							.filter(part => part.type === "text")
+							.map(part => part.text)
+							.join(""),
+			);
+		expect(userTexts).toEqual(["hello", "first", "third"]);
+		expect(session.agent.hasQueuedMessages()).toBe(false);
+	});
+
 	it("a fresh user prompt delivers queued steer and follow-up work", async () => {
 		const { session } = await createSession([{ content: ["one"] }, { content: ["two"] }, { content: ["three"] }]);
 		// Queue real pending work before the user's next send.
