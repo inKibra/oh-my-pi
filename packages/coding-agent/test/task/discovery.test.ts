@@ -153,6 +153,46 @@ describe("discoverAgents", () => {
 		expect(projectAgentsDir).toBe(path.join(projectDir, ".omp", "agents"));
 	});
 
+	test("reports malformed agent files as diagnostics and exposes valid agents' source revision", async () => {
+		// A malformed file used to vanish with only a log line; editors need to
+		// know which file was skipped and the exact source revision of the rest.
+		const agentsDir = path.join(projectDir, ".omp", "agents");
+		await fs.mkdir(agentsDir, { recursive: true });
+		const validPath = path.join(agentsDir, "omp-test-agent.md");
+		const brokenPath = path.join(agentsDir, "broken.md");
+		await fs.writeFile(validPath, OMP_AGENT_MD);
+		await fs.writeFile(brokenPath, ["---", "name: broken-agent", "---", "Missing a description."].join("\n"));
+
+		const { agents, diagnostics } = await discoverAgents(projectDir, tempHome);
+		const valid = agents.find(agent => agent.name === "omp-test-agent");
+
+		expect(valid?.filePath).toBe(validPath);
+		expect(valid?.content).toBe(OMP_AGENT_MD);
+		expect(valid?.revision).toBe(new Bun.CryptoHasher("sha256").update(OMP_AGENT_MD).digest("hex"));
+		expect(agents.map(agent => agent.name)).not.toContain("broken-agent");
+		// Scope to the fixture tree: the real user agents dir is also scanned.
+		expect(diagnostics?.filter(diagnostic => diagnostic.path.startsWith(tempHome))).toEqual([
+			{ path: brokenPath, message: expect.any(String) },
+		]);
+	});
+
+	test("reports an unreadable agents directory but stays silent for a missing one", async () => {
+		// ENOENT is the normal "no agents here" case; any other readdir failure
+		// (here ENOTDIR) hides every agent in that root and must be surfaced.
+		const brokenExt = path.join(tempHome, "broken-ext");
+		const emptyExt = path.join(tempHome, "empty-ext");
+		await fs.mkdir(brokenExt, { recursive: true });
+		await fs.mkdir(emptyExt, { recursive: true });
+		await fs.writeFile(path.join(brokenExt, "agents"), "not a directory");
+		injectOmpExtensionCliRoots([brokenExt, emptyExt], tempHome, projectDir);
+
+		const { diagnostics } = await discoverAgents(projectDir, tempHome);
+
+		expect(diagnostics?.filter(diagnostic => diagnostic.path.startsWith(tempHome))).toEqual([
+			{ path: path.join(brokenExt, "agents"), message: expect.any(String) },
+		]);
+	});
+
 	test("loads agents from OMP npm plugins under <home>/.omp/plugins/node_modules", async () => {
 		await writeOmpPluginAgent(tempHome);
 

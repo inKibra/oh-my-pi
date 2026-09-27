@@ -20,7 +20,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { logger } from "@oh-my-pi/pi-utils";
+import { isEnoent, logger, toError } from "@oh-my-pi/pi-utils";
 import { isProviderEnabled, isUserSourceEnabled } from "../capability";
 import type { EffectiveExtensionRoots } from "../capability/types";
 import { findAllNearestProjectConfigDirs, getConfigDirs } from "../config";
@@ -33,10 +33,20 @@ import type { AgentDefinition } from "./types";
 
 const TASK_AGENT_CONFIG_SOURCE = ".omp";
 
+/** A task-agent file or directory that discovery could not load. */
+export interface AgentDiscoveryDiagnostic {
+	/** Agent file or agents directory that failed to load. */
+	path: string;
+	/** Why it was skipped. */
+	message: string;
+}
+
 /** Result of agent discovery */
 export interface DiscoveryResult {
 	agents: AgentDefinition[];
 	projectAgentsDir: string | null;
+	/** Agent files and directories skipped because they could not be read or parsed. */
+	diagnostics?: AgentDiscoveryDiagnostic[];
 }
 
 interface AgentDirectory {
@@ -46,10 +56,21 @@ interface AgentDirectory {
 }
 
 /**
- * Load agents from a directory.
+ * Load agents from a directory. Unreadable directories (other than missing
+ * ones) and unreadable or invalid agent files are skipped and reported in
+ * `diagnostics`.
  */
-async function loadAgentsFromDir({ dir, source, ignoreModel }: AgentDirectory): Promise<AgentDefinition[]> {
-	const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+async function loadAgentsFromDir(
+	{ dir, source, ignoreModel }: AgentDirectory,
+	diagnostics: AgentDiscoveryDiagnostic[],
+): Promise<AgentDefinition[]> {
+	const entries = await fs.readdir(dir, { withFileTypes: true }).catch(error => {
+		if (!isEnoent(error)) {
+			logger.warn("Failed to read agents directory", { dir, error });
+			diagnostics.push({ path: dir, message: toError(error).message });
+		}
+		return [];
+	});
 	const files = entries
 		.filter(entry => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
 		.sort((a, b) => a.name.localeCompare(b.name))
@@ -60,10 +81,13 @@ async function loadAgentsFromDir({ dir, source, ignoreModel }: AgentDirectory): 
 				.then(content => {
 					const agent = parseAgent(filePath, content, source, "warn");
 					if (ignoreModel) agent.model = undefined;
+					agent.content = content;
+					agent.revision = new Bun.CryptoHasher("sha256").update(content).digest("hex");
 					return agent;
 				})
 				.catch(error => {
 					logger.warn("Failed to read agent file", { filePath, error });
+					diagnostics.push({ path: filePath, message: toError(error).message });
 					return null;
 				});
 		});
@@ -153,11 +177,14 @@ export async function discoverAgents(
 	});
 
 	const seen = new Set<string>();
-	const loadedAgents = (await Promise.all(orderedDirs.map(loadAgentsFromDir))).flat().filter(agent => {
-		if (seen.has(agent.name)) return false;
-		seen.add(agent.name);
-		return true;
-	});
+	const diagnostics: AgentDiscoveryDiagnostic[] = [];
+	const loadedAgents = (await Promise.all(orderedDirs.map(dir => loadAgentsFromDir(dir, diagnostics))))
+		.flat()
+		.filter(agent => {
+			if (seen.has(agent.name)) return false;
+			seen.add(agent.name);
+			return true;
+		});
 
 	const bundledAgents = loadBundledAgents().filter(agent => {
 		if (seen.has(agent.name)) return false;
@@ -167,7 +194,7 @@ export async function discoverAgents(
 
 	const projectAgentsDir = projectDirs.length > 0 ? projectDirs[0].path : null;
 
-	return { agents: [...loadedAgents, ...bundledAgents], projectAgentsDir };
+	return { agents: [...loadedAgents, ...bundledAgents], projectAgentsDir, diagnostics };
 }
 
 /**
