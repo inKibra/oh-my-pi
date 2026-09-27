@@ -55,6 +55,7 @@ import {
 	stripOpenAIResponsesComputerLinkedReasoningIdsForReplay,
 } from "../utils";
 import { clearStreamingPartialJson, kStreamingLastParseLen, kStreamingPartialJson } from "../utils/block-symbols";
+import { abortReason } from "../utils/abort";
 import { hasVisibleAssistantContent } from "../utils/empty-completion-retry";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import { escapeHarmonyControlTokens, isHarmonyDialectModel } from "../utils/harmony-leak";
@@ -1624,6 +1625,9 @@ async function openInitialCodexEventStream(
 					options ? event => options.onSseEvent?.(event, model) : undefined,
 				);
 			} catch (error) {
+				// A cancelled request is not a websocket failure: surface the caller's
+				// reason instead of penalizing the socket and replaying over SSE.
+				if (requestSetup.requestSignal.aborted) throw abortReason(requestSetup.requestSignal);
 				if (!(error instanceof CodexWebSocketTransportError)) throw error;
 				const fatalWebSocketMessage = error.message.toLowerCase();
 				const isFatal = CODEX_WEBSOCKET_FATAL_PATTERNS.some(pattern =>
@@ -1726,9 +1730,8 @@ async function* streamCodexCompactionEvents(
 			try {
 				for await (const event of initial.eventStream) bufferedEvents.push(event);
 			} catch (error) {
-				if (options.signal?.aborted || !(error instanceof CodexWebSocketTransportError)) {
-					throw error;
-				}
+				if (requestSetup.requestSignal.aborted) throw abortReason(requestSetup.requestSignal);
+				if (!(error instanceof CodexWebSocketTransportError)) throw error;
 				const state = requestContext.websocketState;
 				if (state) recordCodexWebSocketFailure(state, true);
 				const fallback = await openCodexSseTransport(model, requestContext, requestSetup, options, state);
@@ -3122,6 +3125,7 @@ class CodexStreamProcessor {
 			this.runtime.transport = next.transport;
 			state.lastTransport = next.transport;
 		} catch (error) {
+			if (this.requestSetup.requestSignal.aborted) throw abortReason(this.requestSetup.requestSignal);
 			if (!(error instanceof CodexWebSocketTransportError)) throw error;
 			// Reopen failed at the websocket layer (handshake refused, connect timeout, etc.).
 			// Activate fallback so subsequent turns use SSE, and replay this turn over SSE

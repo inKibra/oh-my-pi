@@ -3267,6 +3267,54 @@ describe("openai-codex streaming", () => {
 		}
 	});
 
+	it("does not disable websockets or replay over SSE when the caller aborts a websocket reopen", async () => {
+		const tempDir = TempDir.createSync("@pi-codex-stream-");
+		setAgentDir(tempDir.path());
+		const controller = new AbortController();
+		const providerSessionState = new Map<string, ProviderSessionState>();
+		const fetchMock = vi.fn<FetchImpl>(() => {
+			throw new Error("Aborted request must not fall back to SSE");
+		});
+		let constructorCount = 0;
+		class AbortOnReopenWebSocket extends MockWebSocket {
+			constructor(url: string, options?: WsOptions) {
+				super(url, options);
+				constructorCount += 1;
+				if (constructorCount === 1) {
+					this.scheduleOpen();
+				} else {
+					// The retry handshake is still pending when the user cancels.
+					queueMicrotask(() => controller.abort(new Error("user cancelled")));
+				}
+			}
+
+			override send(): void {
+				// Drop the first socket before any output: a retryable websocket failure.
+				this.readyState = MockWebSocket.CLOSED;
+				this.emit("close", { code: 1006 } as unknown as Event);
+			}
+		}
+		global.WebSocket = AbortOnReopenWebSocket as unknown as typeof WebSocket;
+		const model = createCodexTestModel("https://chatgpt.com/backend-api");
+		try {
+			const result = await streamOpenAICodexResponses(model, createCodexTestContext(), {
+				fetch: fetchMock,
+				apiKey: createCodexTestToken(),
+				sessionId: "ws-reopen-abort",
+				signal: controller.signal,
+				providerSessionState,
+			}).result();
+			expect(result.stopReason).toBe("aborted");
+			expect(constructorCount).toBe(2);
+			expect(fetchMock).not.toHaveBeenCalled();
+			const details = getOpenAICodexTransportDetails(model, { sessionId: "ws-reopen-abort", providerSessionState });
+			expect(details.websocketDisabled).toBe(false);
+			expect(details.fallbackCount).toBe(0);
+		} finally {
+			for (const state of providerSessionState.values()) state.close();
+		}
+	});
+
 	it("carries fatal websocket fallback into isolated compaction transport", async () => {
 		const tempDir = TempDir.createSync("@pi-codex-stream-");
 		setAgentDir(tempDir.path());
