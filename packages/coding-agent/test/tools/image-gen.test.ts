@@ -6,11 +6,7 @@ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { CustomToolContext, CustomToolResult } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import {
-	getImageGenTools,
-	getImageGenToolsWithRegistry,
-	imageGenTool,
-} from "@oh-my-pi/pi-coding-agent/tools/image-gen";
+import { getImageGenTools, imageGenTool } from "@oh-my-pi/pi-coding-agent/tools/image-gen";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
 import { createInMemoryAuthStorage } from "../helpers/agent-session-setup";
 
@@ -100,13 +96,25 @@ function collectPaths(result: CustomToolResult<{ imagePaths: string[] }>): void 
 }
 
 describe("imageGenTool catalog routing", () => {
-	it("registers without resolving credentials", async () => {
-		const registry = createRegistry([]);
-		expect(await getImageGenTools(registry)).toEqual([imageGenTool]);
-		expect(await getImageGenToolsWithRegistry(registry)).toEqual([imageGenTool]);
+	it("registers only when an available image model could serve a request", async () => {
+		const settings = Settings.isolated();
+		const chat = catalogModel("anthropic", "claude-chat", "anthropic-messages", "chat");
+		const image = catalogModel("deepinfra", "flux-image", "openai-images");
+
+		expect(await getImageGenTools(createRegistry([chat]), undefined, settings)).toEqual([]);
+		expect(await getImageGenTools(createRegistry([chat, image]), undefined, settings)).toEqual([imageGenTool]);
 		const schema = JSON.stringify(imageGenTool.parameters.toJsonSchema());
 		expect(schema).toContain('"model"');
 		expect(schema).not.toContain('"provider"');
+	});
+
+	it("registers a hosted Responses image model only when a chat carrier resolves", async () => {
+		const settings = Settings.isolated();
+		const hosted = catalogModel("openai", "gpt-image-1", "openai-responses");
+		const carrier = catalogModel("openai", "gpt-5.5", "openai-responses", "chat");
+
+		expect(await getImageGenTools(createRegistry([hosted]), undefined, settings)).toEqual([]);
+		expect(await getImageGenTools(createRegistry([hosted, carrier]), undefined, settings)).toEqual([imageGenTool]);
 	});
 
 	it("uses a request model override as a single explicit candidate", async () => {
