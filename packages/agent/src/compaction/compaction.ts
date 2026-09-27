@@ -206,6 +206,11 @@ export interface CompactionSettings {
 	remoteEndpoint?: string;
 	remoteStreamingV2Enabled?: boolean;
 	v2RetainedMessageBudget?: number;
+	/**
+	 * Deadline for each remote/provider-native compaction request, in
+	 * milliseconds. Unset uses the built-in default; `<= 0` disables it.
+	 */
+	remoteTimeoutMs?: number;
 }
 
 /** Reserve applied when {@link CompactionSettings.reserveTokens} is unset. */
@@ -670,6 +675,8 @@ export interface SummaryOptions {
 	promptOverride?: string;
 	extraContext?: string[];
 	remoteEndpoint?: string;
+	/** Deadline for `remoteEndpoint` requests; see {@link CompactionSettings.remoteTimeoutMs}. */
+	remoteTimeoutMs?: number;
 	/** Stable system-prompt segments from the live turn, preserved for provider cache reuse. */
 	remoteSystemPrompt?: string[];
 	initiatorOverride?: MessageAttribution;
@@ -983,7 +990,7 @@ async function summarizeConversationWindow(
 					endpoint,
 					{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, prompt: promptText, maxTokens },
 					signal,
-					{ fetch: options.fetch, model, apiKey: key },
+					{ fetch: options.fetch, timeoutMs: options.remoteTimeoutMs, model, apiKey: key },
 				),
 			{ signal, missingKeyMessage: "Remote compaction credentials unavailable" },
 		);
@@ -1194,7 +1201,7 @@ async function generateShortSummary(
 					endpoint,
 					{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, prompt: promptText, maxTokens },
 					signal,
-					{ fetch: options?.fetch, model, apiKey: key },
+					{ fetch: options?.fetch, timeoutMs: options?.remoteTimeoutMs, model, apiKey: key },
 				),
 			{ signal, missingKeyMessage: "Remote compaction credentials unavailable" },
 		);
@@ -1607,6 +1614,7 @@ export async function compact(
 		promptOverride: options?.promptOverride,
 		extraContext: options?.extraContext,
 		remoteEndpoint: settings.remoteEnabled === false ? undefined : settings.remoteEndpoint,
+		remoteTimeoutMs: settings.remoteTimeoutMs,
 		remoteSystemPrompt: options?.remoteSystemPrompt,
 		initiatorOverride: options?.initiatorOverride,
 		metadata: options?.metadata,
@@ -1765,6 +1773,7 @@ export async function compact(
 					key =>
 						requestCompactionV2Streaming(model, key, request, signal, {
 							fetch: summaryOptions.fetch,
+							timeoutMs: settings.remoteTimeoutMs,
 							providerSessionState: summaryOptions.providerSessionState,
 							preferWebsockets: summaryOptions.preferWebsockets,
 							codexCompaction: summaryOptions.codexCompaction,
@@ -1816,6 +1825,7 @@ export async function compact(
 							signal,
 							{
 								fetch: summaryOptions.fetch,
+								timeoutMs: settings.remoteTimeoutMs,
 								sessionId: summaryOptions.sessionId,
 								providerSessionState: summaryOptions.providerSessionState,
 								codexCompaction: summaryOptions.codexCompaction,

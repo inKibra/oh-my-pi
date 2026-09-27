@@ -499,6 +499,7 @@ Defined in `packages/coding-agent/src/session/context-settings.ts`:
 - `compaction.remoteEndpoint` = `undefined`
 - `compaction.remoteStreamingV2Enabled` = `true`
 - `compaction.v2RetainedMessageBudget` = `64000`
+- `compaction.remoteTimeoutMs` is unset by default, keeping the 5-minute deadline on each remote/provider-native compaction request (V2 streaming attempts, V1 `/responses/compact`, `compaction.remoteEndpoint`). A positive value replaces that deadline and also bounds the Codex transport's first-event/idle watchdogs for V2 compaction; `0` disables the deadline and leaves only the session's own abort.
 - `compaction.thresholdPercent` = `-1` and `compaction.thresholdTokens` = `-1`; a positive fixed token limit takes precedence over percentage, and otherwise the reserve-based threshold is used.
 - `task.agentCompactionThresholdOverrides` = `{}`; exact-name task/eval agent → token count (`90000`) or percentage (`"80%"`) replacing both thresholds for that agent only. See [Settings](./settings.md#context-compaction-and-memory).
 - `compaction.idleEnabled` = `false`

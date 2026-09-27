@@ -218,6 +218,14 @@ export const cfgCompactionV2RetainedMessageBudget = register({
 	default: 64000,
 });
 
+// No default: unset keeps the compaction engine's built-in request deadline.
+// `0` disables the deadline (the session's own abort still applies).
+export const cfgCompactionRemoteTimeoutMs = register({
+	id: "compaction.remoteTimeoutMs",
+	type: "number",
+	default: undefined,
+});
+
 // Idle compaction
 export const cfgCompactionIdleEnabled = register({
 	id: "compaction.idleEnabled",
@@ -315,6 +323,7 @@ export const cfgCompaction = combine({
 	remoteEndpoint: cfgCompactionRemoteEndpoint,
 	remoteStreamingV2Enabled: cfgCompactionRemoteStreamingV2Enabled,
 	v2RetainedMessageBudget: cfgCompactionV2RetainedMessageBudget,
+	remoteTimeoutMs: cfgCompactionRemoteTimeoutMs,
 	idleEnabled: cfgCompactionIdleEnabled,
 	idleThresholdTokens: cfgCompactionIdleThresholdTokens,
 	idleTimeoutSeconds: cfgCompactionIdleTimeoutSeconds,
